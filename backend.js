@@ -8,102 +8,135 @@ const path = require("path");
 const multer = require("multer");
 
 app.get("/", async (req, res) => {
-	res.send("Success!!!!!!");
+    res.send("Success!!!!!!");
 });
+
+app.use("/cdn", express.static(path.join(__dirname, "uploads")));
 
 app.listen(2009, () => {
-	console.log("Server Started on Port 2009");
+    console.log("Server Started on Port 2009");
 });
 
-// Configure Multer for all file types
 const storage = multer.diskStorage({
-	destination: function (req, file, cb) {
-		cb(null, "./uploads/"); // Store all files in the 'uploads' directory
-	},
-	filename: function (req, file, cb) {
-		const uniqueSuffix = Date.now();
-		cb(null, uniqueSuffix + "-" + file.originalname);
-	},
+    destination: function (req, file, cb) {
+        const folderName = req.params.folder;
+
+        if (!folderName || folderName.trim() === "") {
+            return cb(new Error("Folder name is required."));
+        }
+
+        const folderPath = path.join(__dirname, "uploads", folderName);
+        if (!fs.existsSync(folderPath)) {
+            fs.mkdirSync(folderPath, { recursive: true });
+        }
+        cb(null, folderPath);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now();
+        cb(null, uniqueSuffix + "-" + file.originalname);
+    },
 });
 
 const upload = multer({ storage: storage });
 
-// Upload any file
-app.post("/upload-file", upload.single("file"), async (req, res) => {
-	try {
-		const fileName = req.file.filename;
-		res.json({ status: "ok", data: fileName });
-	} catch (error) {
-		res.status(500).json({ status: "error", message: error.message });
-	}
+// Upload a file to a specific folder
+app.post("/:folder/upload-file", upload.single("file"), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ status: "error", message: "No file uploaded." });
+        }
+
+        const folder = req.params.folder;
+        const fileName = req.file.filename;
+        res.json({ status: "ok", folder: folder, file: fileName, url: `/cdn/${folder}/${fileName}` });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
 });
 
-// Upload multiple files
-app.post("/upload-files", upload.array("files", 10), async (req, res) => {
-	try {
-		const fileNames = req.files.map(file => file.filename);
-		res.json({ status: "ok", data: fileNames });
-	} catch (error) {
-		res.status(500).json({ status: "error", message: error.message });
-	}
+// Upload multiple files to a specific folder
+app.post("/:folder/upload-files", upload.array("files", 10), async (req, res) => {
+    try {
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({ status: "error", message: "No files uploaded." });
+        }
+
+        const folder = req.params.folder;
+        const fileNames = req.files.map(file => file.filename);
+        const fileUrls = fileNames.map(file => `/cdn/${folder}/${file}`);
+        res.json({ status: "ok", folder: folder, files: fileNames, urls: fileUrls });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
 });
 
-// Retrieve any file
-app.get("/get-file/:filename", async (req, res) => {
-	try {
-		const filename = req.params.filename;
-		const filePath = path.join("./uploads/", filename);
-		if (fs.existsSync(filePath)) {
-			const fileBuffer = fs.readFileSync(filePath);
-			const mimeType = require("mime-types").lookup(filename) || "application/octet-stream";
-			res.set("Content-Type", mimeType);
-			res.send(fileBuffer);
-		} else {
-			res.status(404).json({ status: "error", message: "File not found" });
-		}
-	} catch (error) {
-		res.status(500).json({ status: "error", message: error.message });
-	}
+// Update (Replace) a file in a specific folder
+app.put("/:folder/update-file/:filename", upload.single("file"), async (req, res) => {
+    try {
+        const { folder, filename } = req.params;
+
+        if (!folder || !filename) {
+            return res.status(400).json({ status: "error", message: "Folder name and filename are required." });
+        }
+
+        const filePath = path.join(__dirname, "uploads", folder, filename);
+
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ status: "error", message: "File not found." });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ status: "error", message: "No file uploaded." });
+        }
+
+        // Replace the old file with the new file
+        fs.unlinkSync(filePath);
+        fs.renameSync(req.file.path, filePath);
+
+        res.json({ status: "ok", message: "File updated successfully!", url: `/cdn/${folder}/${filename}` });
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
 });
 
-// Delete any file
-app.delete("/delete-file/:filename", async (req, res) => {
-	try {
-		const filename = req.params.filename;
-		const filePath = path.join("./uploads/", filename);
+// Delete a file from a specific folder
+app.delete("/:folder/delete-file/:filename", async (req, res) => {
+    try {
+        const { folder, filename } = req.params;
 
-		if (fs.existsSync(filePath)) {
-			fs.unlinkSync(filePath);
-			res.status(200).json({
-				status: "ok",
-				message: "File deleted successfully!",
-			});
-		} else {
-			res.status(404).json({ status: "error", message: "File not found" });
-		}
-	} catch (error) {
-		res.status(500).json({ status: "error", message: error.message });
-	}
+        if (!folder || !filename) {
+            return res.status(400).json({ status: "error", message: "Folder name and filename are required." });
+        }
+
+        const filePath = path.join(__dirname, "uploads", folder, filename);
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            res.status(200).json({ status: "ok", message: "File deleted successfully!" });
+        } else {
+            res.status(404).json({ status: "error", message: "File not found" });
+        }
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
 });
 
-// Update (replace) any file
-app.put("/update-file/:filename", upload.single("file"), async (req, res) => {
-	try {
-		const filename = req.params.filename;
-		const filePath = path.join("./uploads/", filename);
+// Delete an entire folder
+app.delete("/:folder/delete-folder", async (req, res) => {
+    try {
+        const { folder } = req.params;
 
-		if (fs.existsSync(filePath)) {
-			fs.unlinkSync(filePath); // Delete the old file
-			const uploadedFile = req.file.filename;
-			res.status(200).json({
-				status: "ok",
-				message: "File updated successfully!",
-				file: uploadedFile,
-			});
-		} else {
-			res.status(404).json({ status: "error", message: "File not found" });
-		}
-	} catch (error) {
-		res.status(500).json({ status: "error", message: error.message });
-	}
+        if (!folder) {
+            return res.status(400).json({ status: "error", message: "Folder name is required." });
+        }
+
+        const folderPath = path.join(__dirname, "uploads", folder);
+        if (fs.existsSync(folderPath)) {
+            fs.rmSync(folderPath, { recursive: true, force: true });
+            res.status(200).json({ status: "ok", message: "Folder deleted successfully!" });
+        } else {
+            res.status(404).json({ status: "error", message: "Folder not found" });
+        }
+    } catch (error) {
+        res.status(500).json({ status: "error", message: error.message });
+    }
 });
